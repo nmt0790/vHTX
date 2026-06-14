@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Car, Users, BarChart2, Settings, Bell, RefreshCw, ChevronRight, Zap } from 'lucide-react';
+import { Car, Users, BarChart2, Settings, Bell, RefreshCw, ChevronRight, Zap, Download } from 'lucide-react';
 import OverviewDashboard from '@/components/dashboard/OverviewDashboard';
 import GroupDashboard from '@/components/dashboard/GroupDashboard';
 import VehicleDashboard from '@/components/dashboard/VehicleDashboard';
@@ -19,7 +19,24 @@ const TABS = [
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [exporting, setExporting] = useState(false);
   const now = new Date().toLocaleString('vi-VN', { dateStyle: 'full', timeStyle: 'short' });
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/export');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vHTX_KPI_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -59,6 +76,14 @@ export default function Home() {
               <span className="hidden lg:block text-xs text-gray-400">{now}</span>
               <button className="p-2 text-gray-500 hover:text-emerald-600 hover:bg-gray-100 rounded-lg transition-colors" title="Làm mới dữ liệu">
                 <RefreshCw size={16} />
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                <Download size={13} />
+                {exporting ? 'Đang xuất...' : 'Xuất Excel'}
               </button>
               <div className="relative">
                 <Bell size={16} className="text-gray-500" />
