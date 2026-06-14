@@ -4,6 +4,44 @@ import { readCache } from '@/lib/sync/cache';
 import type { Vehicle, Driver, FleetKpi } from '@/lib/sync/transform';
 import type { HandoverSummary } from '@/lib/import/handoverTransform';
 
+interface MonthlyStats {
+  month: string; revenue: number; trips: number; workDays: number;
+  activeDrivers: number; onlineHours: number;
+  revenuePerTrip: number; revenuePerDay: number; tripsPerDay: number;
+  revenuePerDriver: number; onlineHoursPerDay: number; mom: number | null;
+}
+interface WeeklyStats {
+  weekStart: string; weekEnd: string; revenue: number; trips: number;
+  workDays: number; activeDrivers: number; onlineHours: number;
+  revenuePerDay: number; tripsPerDay: number; revenuePerTrip: number;
+  revenuePerDriver: number; wow: number | null;
+}
+interface DailyStats {
+  date: string; revenue: number; trips: number; onlineHours: number;
+  activeDrivers: number; revenuePerTrip: number; revenuePerDriver: number;
+}
+interface TopDriver {
+  id: string; name: string; plate: string; vehicleType: string;
+  totalRevenue: number; totalTrips: number; avgMonthly: number;
+  revenuePerTrip: number; activeMonths: number;
+  monthBreakdown: { month: string; revenue: number; trips: number }[];
+}
+interface Analytics {
+  summary: {
+    dataRange: string; totalRevenue3Months: number; avgMonthlyRevenue: number;
+    avgDailyRevenue: number; avgRevPerTrip: number;
+    wowRevenue: number | null; wowTrips: number | null;
+    lastWeek: { weekStart: string; weekEnd: string; revenue: number; trips: number; revenuePerDay: number } | null;
+    prevWeek: { weekStart: string; weekEnd: string; revenue: number; trips: number; revenuePerDay: number } | null;
+    peakDate: string; peakRevenue: number; bestWeekStart: string;
+  };
+  monthly: MonthlyStats[];
+  weekly: WeeklyStats[];
+  daily: DailyStats[];
+  topDrivers: TopDriver[];
+  operatingType: { type: string; revenue: number; trips: number; activeDrivers: number; revenuePerTrip: number }[];
+}
+
 // ─── Palette GSM ─────────────────────────────────────────────
 const C = {
   green:      'FF00875A',
@@ -687,12 +725,332 @@ function buildCompliance(wb: ExcelJS.Workbook, summary: HandoverSummary) {
   });
 }
 
+// ─── SHEET 9: Xu hướng tháng ─────────────────────────────────
+function buildMonthlyTrend(wb: ExcelJS.Workbook, an: Analytics) {
+  const ws = wb.addWorksheet('Xu hướng tháng');
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+  ws.columns = [
+    { key: 'month',     width: 12 },
+    { key: 'revenue',   width: 22 },
+    { key: 'perDay',    width: 20 },
+    { key: 'trips',     width: 14 },
+    { key: 'perTrip',   width: 18 },
+    { key: 'drivers',   width: 16 },
+    { key: 'perDriver', width: 20 },
+    { key: 'onlineH',   width: 16 },
+    { key: 'workDays',  width: 12 },
+    { key: 'mom',       width: 18 },
+  ];
+
+  const { summary, monthly, operatingType } = an;
+  title(ws,
+    '📈 XU HƯỚNG DOANH THU THEO THÁNG',
+    `Kỳ dữ liệu: ${summary.dataRange} · Tổng ${monthly.length} tháng · TB cuốc: ${summary.avgRevPerTrip.toLocaleString('vi-VN')} VNĐ`,
+    10
+  );
+
+  const hRow = ws.getRow(4);
+  ['Tháng', 'Doanh thu (VNĐ)', 'DT/ngày (VNĐ)', 'Số cuốc', 'DT/cuốc (VNĐ)', 'Tài xế HĐ', 'DT/tài xế (VNĐ)', 'Giờ online', 'Ngày làm việc', 'Tăng trưởng/ngày'].forEach((h, i) => {
+    const c = hRow.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(C.green));
+  });
+  hRow.height = 22;
+
+  monthly.forEach((m, i) => {
+    const r = ws.getRow(5 + i);
+    const bg = i % 2 === 0 ? C.white : C.greenLight;
+    const momText = m.mom !== null ? (m.mom > 0 ? `▲ +${m.mom}%` : m.mom < 0 ? `▼ ${m.mom}%` : '→ 0%') : '—';
+    [m.month, m.revenue, m.revenuePerDay, m.trips, m.revenuePerTrip,
+     m.activeDrivers, m.revenuePerDriver, m.onlineHours, m.workDays, momText].forEach((val, j) => {
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if ([1, 2, 4, 6].includes(j)) c.numFmt = '#,##0';
+      if ([3, 7, 8].includes(j)) c.numFmt = '#,##0';
+      if (j === 9 && m.mom !== null) {
+        const fg = m.mom > 0 ? C.green : m.mom < 0 ? C.red : C.gray;
+        const fbg = m.mom > 0 ? C.greenLight : m.mom < 0 ? C.redLight : C.grayLight;
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fbg } };
+        c.font = { bold: true, size: 10, color: { argb: fg } };
+      }
+    });
+    r.height = 22;
+  });
+
+  // Total row
+  const totalRev   = monthly.reduce((s, m) => s + m.revenue, 0);
+  const totalTrips = monthly.reduce((s, m) => s + m.trips, 0);
+  const totalDays  = monthly.reduce((s, m) => s + m.workDays, 0);
+  const totalHours = monthly.reduce((s, m) => s + m.onlineHours, 0);
+  const totRow = ws.getRow(5 + monthly.length);
+  [
+    'TỔNG CỘNG', totalRev,
+    totalDays > 0 ? Math.round(totalRev / totalDays) : 0,
+    totalTrips,
+    totalTrips > 0 ? Math.round(totalRev / totalTrips) : 0,
+    '', '', totalHours, totalDays, ''
+  ].forEach((val, j) => {
+    const c = totRow.getCell(j + 1);
+    c.value = val as ExcelJS.CellValue;
+    c.font  = { bold: true, size: 10, color: { argb: C.white } };
+    c.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.green } };
+    c.alignment = { vertical: 'middle', horizontal: j === 0 ? 'center' : 'right' };
+    if ([1, 2, 4].includes(j)) c.numFmt = '#,##0';
+  });
+  totRow.height = 22;
+
+  // ── KPI Summary cards (below table) ──
+  const ks = 5 + monthly.length + 3;
+  ws.mergeCells(ks, 1, ks, 10);
+  const kt = ws.getCell(ks, 1);
+  kt.value = '📊 TỔNG HỢP CHỈ SỐ CHUYÊN SÂU';
+  kt.font  = { bold: true, size: 13, color: { argb: C.white } };
+  kt.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.blue } };
+  kt.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(ks).height = 26;
+
+  const kpis = [
+    ['Doanh thu trung bình/tháng (2 tháng đủ ngày)',  summary.avgMonthlyRevenue,     '', 'VNĐ/tháng'],
+    ['Doanh thu trung bình/ngày',                      summary.avgDailyRevenue,       '', 'VNĐ/ngày'],
+    ['Doanh thu trung bình/cuốc xe',                   summary.avgRevPerTrip,         '', 'VNĐ/cuốc'],
+    ['Ngày có doanh thu cao nhất',                     summary.peakDate,              '', ''],
+    ['Doanh thu ngày cao nhất',                        summary.peakRevenue,            '', 'VNĐ'],
+    ['Tuần có doanh thu cao nhất',                     summary.bestWeekStart,         '', '(Tuần bắt đầu)'],
+  ];
+
+  kpis.forEach(([label, val, , unit], i) => {
+    const r = ws.getRow(ks + 1 + i);
+    const bg = i % 2 === 0 ? C.white : C.blueLight;
+    const lc = r.getCell(1); lc.value = label as string;
+    Object.assign(lc, cel(bg)); lc.font = { bold: true, size: 10, color: { argb: C.dark } };
+    ws.mergeCells(ks + 1 + i, 1, ks + 1 + i, 6);
+
+    const vc = r.getCell(7); vc.value = val as ExcelJS.CellValue;
+    Object.assign(vc, cel(bg));
+    if (typeof val === 'number' && val > 1000) { vc.numFmt = '#,##0'; }
+    vc.font = { bold: true, size: 11, color: { argb: C.blue } };
+    ws.mergeCells(ks + 1 + i, 7, ks + 1 + i, 9);
+
+    const uc = r.getCell(10); uc.value = unit as string;
+    Object.assign(uc, cel(bg)); uc.font = { italic: true, size: 9, color: { argb: C.gray } };
+    r.height = 20;
+  });
+
+  // ── Operating type breakdown ──
+  const os = ks + 1 + kpis.length + 2;
+  ws.mergeCells(os, 1, os, 10);
+  const ot = ws.getCell(os, 1);
+  ot.value = '🚗 PHÂN TÍCH THEO LOẠI XE (GreenCar / Premium)';
+  ot.font  = { bold: true, size: 12, color: { argb: C.white } };
+  ot.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.orange } };
+  ot.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(os).height = 24;
+
+  const ohRow = ws.getRow(os + 1);
+  ['Loại xe', 'Doanh thu (VNĐ)', 'Tỷ trọng (%)', 'Số cuốc', 'DT/cuốc (VNĐ)', 'Tài xế HĐ'].forEach((h, i) => {
+    const c = ohRow.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(C.orange));
+  });
+  ohRow.height = 20;
+
+  const opTotal = operatingType.reduce((s, o) => s + o.revenue, 0);
+  operatingType.forEach((o, i) => {
+    const r = ws.getRow(os + 2 + i);
+    const bg = i % 2 === 0 ? C.white : C.amberLight;
+    const pct = opTotal > 0 ? +((o.revenue / opTotal) * 100).toFixed(1) : 0;
+    [o.type, o.revenue, pct, o.trips, o.revenuePerTrip, o.activeDrivers].forEach((val, j) => {
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if ([1, 4].includes(j)) c.numFmt = '#,##0';
+      if (j === 2) c.numFmt = '0.0"%"';
+    });
+    r.height = 20;
+  });
+}
+
+// ─── SHEET 10: So sánh tuần ──────────────────────────────────
+function buildWeeklyComparison(wb: ExcelJS.Workbook, an: Analytics) {
+  const ws = wb.addWorksheet('So sánh tuần');
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+
+  const { summary, weekly, daily, topDrivers } = an;
+  const lastW = summary.lastWeek;
+  const prevW = summary.prevWeek;
+  const wow = summary.wowRevenue;
+
+  title(ws,
+    '📊 SO SÁNH DOANH THU THEO TUẦN',
+    `Tuần gần nhất: ${lastW?.weekStart ?? '—'} → ${lastW?.weekEnd ?? '—'} · WoW: ${wow !== null ? (wow > 0 ? '+' : '') + wow + '%' : '—'}`,
+    8
+  );
+
+  ws.columns = [
+    { key: 'a', width: 28 },
+    { key: 'b', width: 22 },
+    { key: 'c', width: 22 },
+    { key: 'd', width: 18 },
+    { key: 'e', width: 18 },
+    { key: 'f', width: 18 },
+    { key: 'g', width: 18 },
+    { key: 'h', width: 18 },
+  ];
+
+  // ── Section 1: Last 2 weeks comparison card ──
+  const compData = [
+    ['Chỉ số',                    'Tuần trước (W-1)',                            'Tuần này (W)',                       'Thay đổi'],
+    ['Kỳ',                        `${prevW?.weekStart} → ${prevW?.weekEnd}`,     `${lastW?.weekStart} → ${lastW?.weekEnd}`,  ''],
+    ['Doanh thu (VNĐ)',            prevW?.revenue ?? 0,                           lastW?.revenue ?? 0,                  wow !== null ? (wow > 0 ? `▲ +${wow}%` : `▼ ${wow}%`) : '—'],
+    ['Doanh thu/ngày (VNĐ)',       prevW?.revenuePerDay ?? 0,                     lastW?.revenuePerDay ?? 0,            wow !== null ? (wow > 0 ? `▲ +${wow}%` : `▼ ${wow}%`) : '—'],
+    ['Số cuốc',                    weekly.find(w => w.weekStart === prevW?.weekStart)?.trips ?? 0, weekly.find(w => w.weekStart === lastW?.weekStart)?.trips ?? 0, summary.wowTrips !== null ? (summary.wowTrips > 0 ? `▲ +${summary.wowTrips}%` : `▼ ${summary.wowTrips}%`) : '—'],
+    ['Tài xế hoạt động',           weekly.find(w => w.weekStart === prevW?.weekStart)?.activeDrivers ?? 0, weekly.find(w => w.weekStart === lastW?.weekStart)?.activeDrivers ?? 0, ''],
+  ];
+
+  const hRow2 = ws.getRow(4);
+  ['Chỉ số', 'Tuần W-1', 'Tuần W (gần nhất)', 'Tăng/Giảm', '', '', '', ''].forEach((h, i) => {
+    const c = hRow2.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(i < 4 ? C.blue : C.white));
+  });
+  hRow2.height = 22;
+
+  compData.slice(1).forEach((row, i) => {
+    const r = ws.getRow(5 + i);
+    const bg = i % 2 === 0 ? C.white : C.blueLight;
+    row.forEach((val, j) => {
+      if (j > 3) return;
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if (j === 0) c.font = { bold: true, size: 10, color: { argb: C.dark } };
+      if ([1, 2].includes(j) && typeof val === 'number' && val > 1000) c.numFmt = '#,##0';
+      if (j === 3) {
+        const s = String(val);
+        if (s.startsWith('▲')) c.font = { bold: true, size: 10, color: { argb: C.green } };
+        if (s.startsWith('▼')) c.font = { bold: true, size: 10, color: { argb: C.red } };
+      }
+    });
+    r.height = 20;
+  });
+
+  // ── Section 2: All weeks trend ──
+  const wStart = 5 + compData.length + 1;
+  ws.mergeCells(wStart, 1, wStart, 8);
+  const wT = ws.getCell(wStart, 1);
+  wT.value = '📅 DOANH THU THEO TUẦN (TẤT CẢ)';
+  wT.font  = { bold: true, size: 12, color: { argb: C.white } };
+  wT.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.green } };
+  wT.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(wStart).height = 24;
+
+  const whRow = ws.getRow(wStart + 1);
+  ['Tuần bắt đầu', 'Tuần kết thúc', 'Doanh thu (VNĐ)', 'DT/ngày (VNĐ)', 'Số cuốc', 'DT/cuốc', 'Tài xế HĐ', 'WoW (so ngày)'].forEach((h, i) => {
+    const c = whRow.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(C.green));
+  });
+  whRow.height = 20;
+
+  weekly.forEach((w, i) => {
+    const r = ws.getRow(wStart + 2 + i);
+    const bg = i % 2 === 0 ? C.white : C.greenLight;
+    const wowText = w.wow !== null ? (w.wow > 0 ? `▲ +${w.wow}%` : w.wow < 0 ? `▼ ${w.wow}%` : '→ 0%') : '—';
+    [w.weekStart, w.weekEnd, w.revenue, w.revenuePerDay, w.trips, w.revenuePerTrip, w.activeDrivers, wowText].forEach((val, j) => {
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if ([2, 3, 5].includes(j)) c.numFmt = '#,##0';
+      if (j === 7) {
+        const s = String(val);
+        if (s.startsWith('▲')) { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.greenLight } }; c.font = { bold: true, size: 10, color: { argb: C.green } }; }
+        if (s.startsWith('▼')) { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.redLight } };   c.font = { bold: true, size: 10, color: { argb: C.red } }; }
+      }
+    });
+    r.height = 18;
+  });
+
+  // ── Section 3: Daily last 30 days ──
+  const dStart = wStart + 2 + weekly.length + 2;
+  ws.mergeCells(dStart, 1, dStart, 8);
+  const dT = ws.getCell(dStart, 1);
+  dT.value = '📆 DOANH THU THEO NGÀY (30 NGÀY GẦN NHẤT)';
+  dT.font  = { bold: true, size: 12, color: { argb: C.white } };
+  dT.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.blue } };
+  dT.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(dStart).height = 24;
+
+  const dhRow = ws.getRow(dStart + 1);
+  ['Ngày', 'Doanh thu (VNĐ)', 'Số cuốc', 'DT/cuốc (VNĐ)', 'Tài xế HĐ', 'DT/tài xế (VNĐ)', 'Thứ trong tuần', 'So TB (+/-)'].forEach((h, i) => {
+    const c = dhRow.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(C.blue));
+  });
+  dhRow.height = 20;
+
+  const avgRev = an.summary.avgDailyRevenue;
+  const last30 = daily.slice(-30);
+  const dayNames = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  last30.forEach((d, i) => {
+    const r = ws.getRow(dStart + 2 + i);
+    const bg = i % 2 === 0 ? C.white : C.blueLight;
+    const dayName = dayNames[new Date(d.date).getDay()];
+    const diff = avgRev > 0 ? +((d.revenue - avgRev) / avgRev * 100).toFixed(1) : 0;
+    const diffText = diff > 0 ? `▲ +${diff}%` : diff < 0 ? `▼ ${diff}%` : '→';
+    [d.date, d.revenue, d.trips, d.revenuePerTrip, d.activeDrivers, d.revenuePerDriver, dayName, diffText].forEach((val, j) => {
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if ([1, 3, 5].includes(j)) c.numFmt = '#,##0';
+      if (j === 7) {
+        const s = String(val);
+        if (s.startsWith('▲')) { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.greenLight } }; c.font = { size: 10, color: { argb: C.green } }; }
+        if (s.startsWith('▼')) { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.redLight } };   c.font = { size: 10, color: { argb: C.red } }; }
+      }
+    });
+    r.height = 18;
+  });
+
+  // ── Section 4: Top 50 drivers ──
+  const tStart = dStart + 2 + last30.length + 2;
+  ws.mergeCells(tStart, 1, tStart, 8);
+  const tT = ws.getCell(tStart, 1);
+  tT.value = `🏆 TOP ${Math.min(topDrivers.length, 50)} TÀI XẾ DOANH THU CAO NHẤT (3 THÁNG)`;
+  tT.font  = { bold: true, size: 12, color: { argb: C.white } };
+  tT.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.orange } };
+  tT.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(tStart).height = 24;
+
+  const thRow = ws.getRow(tStart + 1);
+  ['Hạng', 'Mã tài xế', 'Tên tài xế', 'Biển số', 'Loại xe', 'Tổng DT 3T (VNĐ)', 'DT TB/tháng (VNĐ)', 'DT/cuốc (VNĐ)'].forEach((h, i) => {
+    const c = thRow.getCell(i + 1);
+    c.value = h;
+    Object.assign(c, hdr(C.orange));
+  });
+  thRow.height = 20;
+
+  topDrivers.slice(0, 50).forEach((d, i) => {
+    const r = ws.getRow(tStart + 2 + i);
+    const bg = i < 3 ? C.amberLight : i % 2 === 0 ? C.white : C.grayLight;
+    [i + 1, d.id, d.name, d.plate, d.vehicleType, d.totalRevenue, d.avgMonthly, d.revenuePerTrip].forEach((val, j) => {
+      const c = r.getCell(j + 1);
+      c.value = val as ExcelJS.CellValue;
+      Object.assign(c, cel(bg));
+      if ([5, 6, 7].includes(j)) c.numFmt = '#,##0';
+      if (j === 0 && i < 3) c.font = { bold: true, size: 11, color: { argb: C.orange } };
+    });
+    r.height = 18;
+  });
+}
+
 // ─── Main handler ─────────────────────────────────────────────
 export async function GET() {
-  const vehicles = readCache<Vehicle[]>('vehicles') ?? [];
-  const drivers  = readCache<Driver[]>('drivers')  ?? [];
-  const kpiRaw   = readCache<Record<string, number>>('fleet_kpi');
-  const handover = readCache<HandoverSummary>('handover_summary');
+  const vehicles  = readCache<Vehicle[]>('vehicles') ?? [];
+  const drivers   = readCache<Driver[]>('drivers')  ?? [];
+  const kpiRaw    = readCache<Record<string, number>>('fleet_kpi');
+  const handover  = readCache<HandoverSummary>('handover_summary');
+  const analytics = readCache<Analytics>('analytics');
 
   const kpi: FleetKpi = {
     totalVehicles:       kpiRaw?.totalVehicles       ?? vehicles.length,
@@ -727,6 +1085,10 @@ export async function GET() {
   if (handover) {
     buildHandover(wb, handover);
     buildCompliance(wb, handover);
+  }
+  if (analytics) {
+    buildMonthlyTrend(wb, analytics);
+    buildWeeklyComparison(wb, analytics);
   }
 
   const buf  = await wb.xlsx.writeBuffer();
