@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Car, Users, BarChart2, Settings, Bell, RefreshCw, ChevronRight, Zap, Download } from 'lucide-react';
+import { Car, Users, BarChart2, Settings, Bell, RefreshCw, ChevronRight, Zap, Download, Upload } from 'lucide-react';
 import OverviewDashboard from '@/components/dashboard/OverviewDashboard';
 import GroupDashboard from '@/components/dashboard/GroupDashboard';
 import VehicleDashboard from '@/components/dashboard/VehicleDashboard';
@@ -8,14 +8,16 @@ import DriverDashboard from '@/components/dashboard/DriverDashboard';
 import OperationsDashboard from '@/components/dashboard/OperationsDashboard';
 import ChargingDashboard from '@/components/dashboard/ChargingDashboard';
 import SyncStatus from '@/components/dashboard/SyncStatus';
+import ImportDashboard from '@/components/dashboard/ImportDashboard';
 
 const TABS = [
-  { id: 'overview', label: 'Tổng quan', icon: BarChart2 },
-  { id: 'group', label: 'Tổ xe', icon: Settings },
-  { id: 'vehicle', label: 'Từng xe', icon: Car },
-  { id: 'driver', label: 'Tài xế', icon: Users },
-  { id: 'operations', label: 'Vận hành', icon: Bell },
-  { id: 'charging', label: 'Ưu đãi sạc', icon: Zap },
+  { id: 'overview',    label: 'Tổng quan',   icon: BarChart2 },
+  { id: 'group',       label: 'Tổ xe',        icon: Settings },
+  { id: 'vehicle',     label: 'Từng xe',      icon: Car },
+  { id: 'driver',      label: 'Tài xế',       icon: Users },
+  { id: 'operations',  label: 'Vận hành',     icon: Bell },
+  { id: 'charging',    label: 'Ưu đãi sạc',  icon: Zap },
+  { id: 'import',      label: 'Import SAP',   icon: Upload },
 ];
 
 export default function Home() {
@@ -128,6 +130,7 @@ export default function Home() {
         {activeTab === 'driver' && <DriverDashboard />}
         {activeTab === 'operations' && <OperationsDashboard />}
         {activeTab === 'charging' && <ChargingDashboard />}
+        {activeTab === 'import' && <ImportDashboard />}
       </main>
 
       {/* Footer */}
