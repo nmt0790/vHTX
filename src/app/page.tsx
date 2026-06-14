@@ -7,6 +7,7 @@ import VehicleDashboard from '@/components/dashboard/VehicleDashboard';
 import DriverDashboard from '@/components/dashboard/DriverDashboard';
 import OperationsDashboard from '@/components/dashboard/OperationsDashboard';
 import ChargingDashboard from '@/components/dashboard/ChargingDashboard';
+import SyncStatus from '@/components/dashboard/SyncStatus';
 
 const TABS = [
   { id: 'overview', label: 'Tổng quan', icon: BarChart2 },
@@ -74,6 +75,7 @@ export default function Home() {
             {/* Right Side */}
             <div className="flex items-center gap-2">
               <span className="hidden lg:block text-xs text-gray-400">{now}</span>
+              <SyncStatus />
               <button className="p-2 text-gray-500 hover:text-emerald-600 hover:bg-gray-100 rounded-lg transition-colors" title="Làm mới dữ liệu">
                 <RefreshCw size={16} />
               </button>
