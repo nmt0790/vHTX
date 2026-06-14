@@ -1,0 +1,151 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --accent: #4ade80;
+  --danger: #f87171;
+  --bg: #0f1117;
+  --panel: #1a1d27;
+}
+
+html, body {
+  height: 100%;
+  background: radial-gradient(circle at 50% 20%, #1c2030, #0a0c12 70%);
+  color: #e5e7eb;
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#game-wrapper {
+  position: relative;
+  width: 900px;
+  max-width: 96vw;
+}
+
+#hud {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-radius: 10px 10px 0 0;
+  border: 1px solid #2a2f3d;
+  border-bottom: none;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+}
+
+.hud-item span {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.hud-bar {
+  flex: 1;
+  height: 14px;
+  background: #2a2f3d;
+  border-radius: 7px;
+  overflow: hidden;
+  max-width: 260px;
+  margin-left: auto;
+}
+
+#health-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--danger), var(--accent));
+  transition: width 0.15s ease;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  background: #11141d;
+  border: 1px solid #2a2f3d;
+  border-radius: 0 0 10px 10px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 15, 0.82);
+  backdrop-filter: blur(3px);
+  border-radius: 10px;
+  z-index: 5;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.panel {
+  text-align: center;
+  padding: 34px 40px;
+  background: var(--panel);
+  border: 1px solid #2a2f3d;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  max-width: 420px;
+}
+
+.panel h1 {
+  font-size: 34px;
+  letter-spacing: 4px;
+  margin-bottom: 8px;
+  color: var(--accent);
+}
+
+.tagline {
+  color: #9ca3af;
+  margin-bottom: 20px;
+}
+
+.controls {
+  list-style: none;
+  text-align: left;
+  display: inline-block;
+  margin-bottom: 24px;
+  line-height: 1.9;
+  color: #cbd5e1;
+}
+
+.controls b {
+  color: #fff;
+  background: #2a2f3d;
+  padding: 1px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 12px 34px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #07210f;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+
+button:hover {
+  background: #6ee79a;
+}
+
+button:active {
+  transform: scale(0.96);
+}
