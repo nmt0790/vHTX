@@ -28,13 +28,36 @@ export interface HandoverVehicleUpdate {
   handoverType: string;    // In | Out
 }
 
+export interface PendingHandover {
+  plate:       string;
+  driverName:  string;
+  driverSapId: string;
+  groupId:     string;
+  model:       string;
+  operatingType: string;
+  status:      string;   // SentToDriver | PendingConfirmation | New | DriverDeclined
+  date:        string;
+  handoverType: string;
+}
+
+export interface GroupCompliance {
+  groupId:        string;
+  completed:      number;
+  pending:        number;
+  total:          number;
+  complianceRate: number;  // 0-100
+}
+
 export interface HandoverSummary {
-  vehicleUpdates:  HandoverVehicleUpdate[];
-  notGoodVehicles: HandoverVehicleUpdate[];
-  totalHandovers:  number;
-  byStatus: Record<string, number>;
-  byAssessment: Record<string, number>;
-  byOperatingType: Record<string, number>;
+  vehicleUpdates:   HandoverVehicleUpdate[];
+  notGoodVehicles:  HandoverVehicleUpdate[];
+  pendingHandovers: PendingHandover[];
+  groupCompliance:  GroupCompliance[];
+  totalHandovers:   number;
+  byStatus:         Record<string, number>;
+  byAssessment:     Record<string, number>;
+  byOperatingType:  Record<string, number>;
+  reportDate:       string;  // latest date in the file
 }
 
 export function processHandover(headers: string[], rows: Row[]): HandoverSummary {
@@ -143,13 +166,75 @@ export function processHandover(headers: string[], rows: Row[]): HandoverSummary
 
   const notGoodVehicles = vehicleUpdates.filter(v => v.condition === 'NotGood');
 
+  // ── Track pending handovers (not yet Completed) ───────────────
+  // For each plate, find the most recent pending handover (if latest event is not Completed)
+  const PENDING_STATUSES = new Set(['SentToDriver', 'PendingConfirmation', 'New', 'DriverDeclined']);
+  const latestByPlate = new Map<string, { date: string; row: Row }>();
+
+  for (const row of rows) {
+    const plate = String(row[c.plate] ?? '').trim();
+    const date  = String(row[c.date]  ?? '').trim();
+    if (!plate) continue;
+    const cur = latestByPlate.get(plate);
+    if (!cur || compareDates(date, cur.date) > 0) {
+      latestByPlate.set(plate, { date, row });
+    }
+  }
+
+  const pendingHandovers: PendingHandover[] = [];
+  for (const [plate, { row }] of latestByPlate) {
+    const status = String(row[c.status] ?? '').trim();
+    if (!PENDING_STATUSES.has(status)) continue;
+    pendingHandovers.push({
+      plate,
+      driverName:   String(row[c.driverName] ?? '').trim(),
+      driverSapId:  String(row[c.sapId]      ?? '').trim(),
+      groupId:      String(row[c.subGroup]   ?? row[c.group] ?? '').trim(),
+      model:        String(row[c.model]      ?? '').trim(),
+      operatingType:String(row[c.opType]     ?? '').trim(),
+      status,
+      date:         parseDate(String(row[c.date] ?? '')),
+      handoverType: String(row[c.type] ?? '').trim(),
+    });
+  }
+
+  // ── Group compliance ──────────────────────────────────────────
+  // For each Tổ: count completed vs pending from latest handover per plate
+  const groupMap = new Map<string, { completed: number; pending: number }>();
+  for (const [plate, { row }] of latestByPlate) {
+    const group  = String(row[c.subGroup] ?? row[c.group] ?? '').trim();
+    const status = String(row[c.status] ?? '').trim();
+    if (!group) continue;
+    if (!groupMap.has(group)) groupMap.set(group, { completed: 0, pending: 0 });
+    const g = groupMap.get(group)!;
+    if (status === 'Completed') g.completed++;
+    else if (PENDING_STATUSES.has(status)) g.pending++;
+  }
+
+  const groupCompliance: GroupCompliance[] = [...groupMap.entries()]
+    .map(([groupId, { completed, pending }]) => ({
+      groupId,
+      completed,
+      pending,
+      total:          completed + pending,
+      complianceRate: completed + pending > 0 ? Math.round((completed / (completed + pending)) * 100) : 0,
+    }))
+    .sort((a, b) => a.complianceRate - b.complianceRate); // worst first
+
+  // Find latest date across all rows
+  const allDates = rows.map(r => String(r[c.date] ?? '')).filter(Boolean);
+  const reportDate = allDates.reduce((a, b) => compareDates(a, b) > 0 ? a : b, '');
+
   return {
     vehicleUpdates,
     notGoodVehicles,
+    pendingHandovers,
+    groupCompliance,
     totalHandovers: rows.length,
     byStatus,
     byAssessment,
     byOperatingType: byOpType,
+    reportDate,
   };
 }
 

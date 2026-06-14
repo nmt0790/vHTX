@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { AlertCircle, Wrench, Navigation, Phone, Calendar, CheckCircle2, Clock, AlertTriangle, Car, ThumbsDown, ThumbsUp } from 'lucide-react';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { OPERATIONS_TASKS, MAINTENANCE_SCHEDULE } from '@/lib/mockData';
-import type { HandoverSummary, HandoverVehicleUpdate } from '@/lib/import/handoverTransform';
+import type { HandoverSummary, HandoverVehicleUpdate, PendingHandover } from '@/lib/import/handoverTransform';
 
 const typeIcon: Record<string, React.ReactNode> = {
   'Khiếu nại': <Phone size={14} className="text-red-500" />,
@@ -33,6 +33,8 @@ export default function OperationsDashboard() {
   const [filter, setFilter] = useState('all');
   const [handover, setHandover] = useState<HandoverSummary | null>(null);
   const [notGoodPage, setNotGoodPage] = useState(0);
+  const [pendingPage, setPendingPage] = useState(0);
+  const [pendingFilter, setPendingFilter] = useState('all');
   const PAGE_SIZE = 10;
 
   useEffect(() => {
@@ -48,12 +50,27 @@ export default function OperationsDashboard() {
   const openCount     = OPERATIONS_TASKS.filter(t => t.status !== 'Đã xử lý').length;
   const resolvedCount = OPERATIONS_TASKS.filter(t => t.status === 'Đã xử lý').length;
   const notGoodCount  = handover?.notGoodVehicles.length ?? 0;
-  const goodCount     = (handover?.byAssessment?.['Good'] ?? 0);
+  const goodCount     = handover?.byAssessment?.['Good'] ?? 0;
 
-  // Paginated NotGood list
+  // NotGood pagination
   const notGoodList: HandoverVehicleUpdate[] = handover?.notGoodVehicles ?? [];
   const notGoodPage$ = notGoodList.slice(notGoodPage * PAGE_SIZE, (notGoodPage + 1) * PAGE_SIZE);
-  const totalPages   = Math.ceil(notGoodList.length / PAGE_SIZE);
+  const totalNotGoodPages = Math.ceil(notGoodList.length / PAGE_SIZE);
+
+  // Pending pagination + filter
+  const allPending: PendingHandover[] = handover?.pendingHandovers ?? [];
+  const filteredPending = pendingFilter === 'all'
+    ? allPending
+    : allPending.filter(p => p.status === pendingFilter);
+  const pendingPage$ = filteredPending.slice(pendingPage * PAGE_SIZE, (pendingPage + 1) * PAGE_SIZE);
+  const totalPendingPages = Math.ceil(filteredPending.length / PAGE_SIZE);
+
+  // Compliance stats
+  const completedCount = handover?.byStatus?.['Completed'] ?? 0;
+  const pendingTotal   = (handover?.byStatus?.['SentToDriver'] ?? 0)
+                       + (handover?.byStatus?.['PendingConfirmation'] ?? 0);
+  const totalForRate   = completedCount + pendingTotal;
+  const complianceRate = totalForRate > 0 ? Math.round((completedCount / totalForRate) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -141,20 +158,14 @@ export default function OperationsDashboard() {
                 </table>
               </div>
 
-              {totalPages > 1 && (
+              {totalNotGoodPages > 1 && (
                 <div className="flex items-center justify-between mt-3 text-xs text-gray-500">
-                  <span>Trang {notGoodPage + 1} / {totalPages} · {notGoodList.length} xe không đạt</span>
+                  <span>Trang {notGoodPage + 1} / {totalNotGoodPages} · {notGoodList.length} xe không đạt</span>
                   <div className="flex gap-2">
-                    <button
-                      disabled={notGoodPage === 0}
-                      onClick={() => setNotGoodPage(p => p - 1)}
-                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400"
-                    >← Trước</button>
-                    <button
-                      disabled={notGoodPage >= totalPages - 1}
-                      onClick={() => setNotGoodPage(p => p + 1)}
-                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400"
-                    >Sau →</button>
+                    <button disabled={notGoodPage === 0} onClick={() => setNotGoodPage(p => p - 1)}
+                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400">← Trước</button>
+                    <button disabled={notGoodPage >= totalNotGoodPages - 1} onClick={() => setNotGoodPage(p => p + 1)}
+                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400">Sau →</button>
                   </div>
                 </div>
               )}
@@ -165,6 +176,124 @@ export default function OperationsDashboard() {
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700 flex items-center gap-2">
           <Car size={16} />
           Chưa có dữ liệu kiểm tra xe. Upload file <span className="font-mono font-medium">handoverReport_*.xlsx</span> vào tab Import SAP.
+        </div>
+      )}
+
+      {/* Compliance — Xe/TX chưa xác nhận bàn giao */}
+      {handover && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-500" />
+              Theo dõi xác nhận bàn giao xe {handover.reportDate ? `(cập nhật: ${handover.reportDate.slice(0,10)})` : ''}
+            </h3>
+            <div className={`text-2xl font-bold ${complianceRate < 80 ? 'text-red-600' : complianceRate < 95 ? 'text-amber-600' : 'text-emerald-600'}`}>
+              {complianceRate}%
+              <span className="text-xs font-normal text-gray-500 ml-1">hoàn thành</span>
+            </div>
+          </div>
+
+          {/* Overall progress bar */}
+          <div>
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>✅ Completed: <strong className="text-emerald-700">{completedCount}</strong></span>
+              <span>⏳ Chưa xác nhận: <strong className="text-amber-600">{pendingTotal}</strong></span>
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+              <div className="h-3 rounded-full bg-emerald-500 transition-all" style={{ width: `${complianceRate}%` }} />
+            </div>
+          </div>
+
+          {/* By group */}
+          {handover.groupCompliance.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Tỷ lệ theo Tổ (sắp xếp từ thấp đến cao)</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {handover.groupCompliance.map(g => (
+                  <div key={g.groupId} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 w-32 truncate" title={g.groupId}>
+                      {g.groupId.split('.').slice(-2).join('.')}
+                    </span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-2 rounded-full ${g.complianceRate < 80 ? 'bg-red-400' : g.complianceRate < 95 ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                        style={{ width: `${g.complianceRate}%` }}
+                      />
+                    </div>
+                    <span className={`text-xs font-medium w-10 text-right ${g.complianceRate < 80 ? 'text-red-600' : g.complianceRate < 95 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {g.complianceRate}%
+                    </span>
+                    <span className="text-xs text-gray-400 w-20">({g.completed}/{g.total})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pending list */}
+          {allPending.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-gray-600">Xe/Tài xế chưa xác nhận ({allPending.length})</p>
+                <div className="flex gap-1">
+                  {['all', 'SentToDriver', 'PendingConfirmation', 'DriverDeclined'].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => { setPendingFilter(s); setPendingPage(0); }}
+                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${pendingFilter === s ? 'bg-amber-500 text-white border-amber-500' : 'border-gray-200 text-gray-600 hover:border-amber-300'}`}
+                    >
+                      {s === 'all' ? 'Tất cả' : s === 'SentToDriver' ? 'Đã gửi TX' : s === 'PendingConfirmation' ? 'Chờ xác nhận' : 'TX từ chối'}
+                      {s !== 'all' && ` (${handover.byStatus?.[s] ?? 0})`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      {['Biển số', 'Tài xế', 'Tổ', 'Loại xe', 'Trạng thái', 'Ngày'].map(h => (
+                        <th key={h} className="text-left font-medium text-gray-500 pb-2 pr-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {pendingPage$.map((p, i) => (
+                      <tr key={i} className={`hover:bg-amber-50/30 ${p.status === 'DriverDeclined' ? 'bg-red-50/30' : ''}`}>
+                        <td className="py-2 pr-3 font-mono font-medium text-gray-900">{p.plate}</td>
+                        <td className="py-2 pr-3 text-gray-700">{p.driverName || '—'}</td>
+                        <td className="py-2 pr-3 text-gray-500">{p.groupId.split('.').pop()}</td>
+                        <td className="py-2 pr-3 text-gray-500">{p.operatingType || '—'}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                            p.status === 'DriverDeclined'       ? 'bg-red-100 text-red-700' :
+                            p.status === 'PendingConfirmation'  ? 'bg-amber-100 text-amber-700' :
+                            'bg-blue-100 text-blue-700'
+                          }`}>
+                            {p.status === 'SentToDriver' ? 'Đã gửi TX' :
+                             p.status === 'PendingConfirmation' ? 'Chờ XN' :
+                             p.status === 'DriverDeclined' ? 'TX từ chối' : p.status}
+                          </span>
+                        </td>
+                        <td className="py-2 text-gray-400">{p.date?.slice(0,10)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {totalPendingPages > 1 && (
+                <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
+                  <span>Trang {pendingPage + 1}/{totalPendingPages} · {filteredPending.length} bản ghi</span>
+                  <div className="flex gap-2">
+                    <button disabled={pendingPage === 0} onClick={() => setPendingPage(p => p - 1)}
+                      className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-amber-400">← Trước</button>
+                    <button disabled={pendingPage >= totalPendingPages - 1} onClick={() => setPendingPage(p => p + 1)}
+                      className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-amber-400">Sau →</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
