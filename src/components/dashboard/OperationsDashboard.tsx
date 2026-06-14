@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
-import { AlertCircle, Wrench, Navigation, Phone, Calendar, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { AlertCircle, Wrench, Navigation, Phone, Calendar, CheckCircle2, Clock, AlertTriangle, Car, ThumbsDown, ThumbsUp } from 'lucide-react';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { OPERATIONS_TASKS, MAINTENANCE_SCHEDULE } from '@/lib/mockData';
+import type { HandoverSummary, HandoverVehicleUpdate } from '@/lib/import/handoverTransform';
 
 const typeIcon: Record<string, React.ReactNode> = {
   'Khiếu nại': <Phone size={14} className="text-red-500" />,
@@ -24,15 +25,35 @@ const INCIDENTS_MONTH = [
   { date: '12/06', type: 'Hỏng xe giữa đường', vehicle: 'GSM-067', driver: 'TX067', status: 'Đang xử lý' },
 ];
 
+function fmtKm(n: number) {
+  return n > 0 ? n.toLocaleString('vi-VN') + ' km' : '—';
+}
+
 export default function OperationsDashboard() {
   const [filter, setFilter] = useState('all');
+  const [handover, setHandover] = useState<HandoverSummary | null>(null);
+  const [notGoodPage, setNotGoodPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  useEffect(() => {
+    fetch('/api/handover').then(r => r.json()).then(d => {
+      if (d.summary) setHandover(d.summary);
+    }).catch(() => {});
+  }, []);
 
   const filteredTasks = filter === 'all'
     ? OPERATIONS_TASKS
     : OPERATIONS_TASKS.filter(t => t.type === filter || t.status === filter);
 
-  const openCount = OPERATIONS_TASKS.filter(t => t.status !== 'Đã xử lý').length;
+  const openCount     = OPERATIONS_TASKS.filter(t => t.status !== 'Đã xử lý').length;
   const resolvedCount = OPERATIONS_TASKS.filter(t => t.status === 'Đã xử lý').length;
+  const notGoodCount  = handover?.notGoodVehicles.length ?? 0;
+  const goodCount     = (handover?.byAssessment?.['Good'] ?? 0);
+
+  // Paginated NotGood list
+  const notGoodList: HandoverVehicleUpdate[] = handover?.notGoodVehicles ?? [];
+  const notGoodPage$ = notGoodList.slice(notGoodPage * PAGE_SIZE, (notGoodPage + 1) * PAGE_SIZE);
+  const totalPages   = Math.ceil(notGoodList.length / PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -42,13 +63,13 @@ export default function OperationsDashboard() {
           { label: 'Việc đang xử lý', value: openCount, icon: Clock, color: 'bg-amber-500' },
           { label: 'Đã xử lý hôm nay', value: resolvedCount, icon: CheckCircle2, color: 'bg-emerald-500' },
           { label: 'Bảo dưỡng tuần này', value: MAINTENANCE_SCHEDULE.length, icon: Wrench, color: 'bg-blue-500' },
-          { label: 'Sự cố tháng này', value: INCIDENTS_MONTH.length, icon: AlertTriangle, color: 'bg-red-500' },
+          { label: 'Xe kiểm tra không đạt', value: notGoodCount, icon: AlertTriangle, color: notGoodCount > 0 ? 'bg-red-500' : 'bg-gray-400' },
         ].map((item, i) => (
           <div key={i} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-gray-500">{item.label}</p>
-                <p className="text-3xl font-bold text-gray-900 mt-1">{item.value}</p>
+                <p className={`text-3xl font-bold mt-1 ${i === 3 && notGoodCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{item.value}</p>
               </div>
               <div className={`${item.color} p-3 rounded-lg`}>
                 <item.icon size={20} className="text-white" />
@@ -57,6 +78,95 @@ export default function OperationsDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Handover / Kiểm tra xe */}
+      {handover ? (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Car size={16} className="text-blue-500" /> Kết quả kiểm tra xe khi bàn giao
+            </h3>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1 text-emerald-700 font-medium">
+                <ThumbsUp size={13} /> Good: {goodCount}
+              </span>
+              <span className="flex items-center gap-1 text-red-600 font-medium">
+                <ThumbsDown size={13} /> NotGood: {notGoodCount}
+              </span>
+              {handover.byOperatingType && (
+                <>
+                  <span className="text-gray-400">|</span>
+                  <span className="text-blue-600">GreenCar: {handover.byOperatingType['GreenCar'] ?? 0}</span>
+                  <span className="text-purple-600">Premium: {handover.byOperatingType['Premium'] ?? 0}</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {notGoodList.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              <ThumbsUp size={32} className="mx-auto mb-2 text-emerald-400" />
+              Tất cả xe đều đạt kiểm tra — không có xe NotGood
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      {['Biển số', 'Tài xế', 'Tổ', 'Model', 'ODO (km)', 'Ngày bàn giao', 'Kết quả'].map(h => (
+                        <th key={h} className="text-left text-xs font-medium text-gray-500 pb-3 pr-4 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {notGoodPage$.map((v, i) => (
+                      <tr key={i} className="hover:bg-red-50/30">
+                        <td className="py-2.5 pr-4 font-mono text-sm font-medium text-gray-900">{v.plate}</td>
+                        <td className="py-2.5 pr-4 text-gray-700 whitespace-nowrap">{v.driverName || '—'}</td>
+                        <td className="py-2.5 pr-4 text-gray-500 text-xs">{v.groupId.split('.').pop()}</td>
+                        <td className="py-2.5 pr-4 text-gray-600 text-xs">{v.model}</td>
+                        <td className="py-2.5 pr-4 text-gray-700 tabular-nums">{fmtKm(v.kmTotal)}</td>
+                        <td className="py-2.5 pr-4 text-gray-500 text-xs whitespace-nowrap">
+                          {v.lastHandover ? v.lastHandover.slice(0, 10) : '—'}
+                        </td>
+                        <td className="py-2.5">
+                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">
+                            <ThumbsDown size={10} /> NotGood
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-3 text-xs text-gray-500">
+                  <span>Trang {notGoodPage + 1} / {totalPages} · {notGoodList.length} xe không đạt</span>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={notGoodPage === 0}
+                      onClick={() => setNotGoodPage(p => p - 1)}
+                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400"
+                    >← Trước</button>
+                    <button
+                      disabled={notGoodPage >= totalPages - 1}
+                      onClick={() => setNotGoodPage(p => p + 1)}
+                      className="px-3 py-1 rounded border border-gray-200 disabled:opacity-40 hover:border-emerald-400"
+                    >Sau →</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700 flex items-center gap-2">
+          <Car size={16} />
+          Chưa có dữ liệu kiểm tra xe. Upload file <span className="font-mono font-medium">handoverReport_*.xlsx</span> vào tab Import SAP.
+        </div>
+      )}
 
       {/* Ca làm việc */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">

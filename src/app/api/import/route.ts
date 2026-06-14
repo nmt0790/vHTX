@@ -4,6 +4,7 @@ import { detectFileCategory, FileCategory } from '@/lib/import/columnMapper';
 import { vehicleMasterToVehicle, vehicleStatusToVehicle } from '@/lib/import/vehicleTransform';
 import { driverMasterToDriver } from '@/lib/import/driverTransform';
 import { aggregateAttendance } from '@/lib/import/attendanceTransform';
+import { processHandover } from '@/lib/import/handoverTransform';
 import { writeCache, readCache } from '@/lib/sync/cache';
 import type { Vehicle, Driver } from '@/lib/sync/transform';
 
@@ -142,7 +143,7 @@ async function processSheet(
         };
       }
 
-      // ── Driver retirement (informational, store separately) ─────
+      // ── Driver retirement (informational) ───────────────────────
       case 'driver_retirement': {
         writeCache('driver_retirement', rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]))));
         return {
@@ -151,12 +152,59 @@ async function processSheet(
         };
       }
 
-      // ── Handover report (update ODO) ────────────────────────────
+      // ── Handover / kiểm tra xe ──────────────────────────────────
       case 'handover': {
-        writeCache('handover_report', rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]))));
+        const summary = processHandover(headers, rows);
+        const { vehicleUpdates, notGoodVehicles, byAssessment, byOperatingType } = summary;
+
+        // Update vehicles with ODO, driver, condition, operating type
+        const vehicles: Vehicle[] = readCache<Vehicle[]>('vehicles') ?? [];
+        const byPlate = new Map(vehicles.map(v => [v.plate, v]));
+
+        for (const upd of vehicleUpdates) {
+          if (!upd.plate) continue;
+          const existing = byPlate.get(upd.plate);
+          if (existing) {
+            byPlate.set(upd.plate, {
+              ...existing,
+              kmTotal:         upd.kmTotal > 0 ? upd.kmTotal : existing.kmTotal,
+              driverId:        upd.driverSapId || existing.driverId,
+              lastMaintenance: upd.lastHandover || existing.lastMaintenance,
+              // Use handover model if more specific (VFE34 > LIMOGREEN)
+              model:           upd.model || existing.model,
+              groupId:         upd.groupId || existing.groupId,
+              groupName:       upd.groupId || existing.groupName,
+              // Store condition in rating field (1=NotGood, 5=Good, 3=Unknown)
+              rating:          upd.condition === 'Good' ? 5 : upd.condition === 'NotGood' ? 2 : existing.rating,
+              // Store operating type in vehicleType (accessed via driver record usually)
+            } satisfies Vehicle);
+          } else if (upd.plate) {
+            // Vehicle not in master yet — create minimal record
+            byPlate.set(upd.plate, {
+              id: upd.plate, plate: upd.plate,
+              model: upd.model, groupId: upd.groupId, groupName: upd.groupId,
+              status: 'Rảnh', battery: 0,
+              kmToday: 0, kmTotal: upd.kmTotal, tripsToday: 0, revenueToday: 0,
+              driverId: upd.driverSapId,
+              lastMaintenance: upd.lastHandover, nextMaintenance: '',
+              rating: upd.condition === 'Good' ? 5 : upd.condition === 'NotGood' ? 2 : 3,
+            });
+          }
+        }
+
+        const merged = [...byPlate.values()];
+        writeCache('vehicles', merged);
+        writeCache('handover_summary', summary);
+        recomputeFleetKpi();
+
+        const goodCount    = byAssessment['Good']    ?? 0;
+        const notGoodCount = byAssessment['NotGood'] ?? 0;
+        const greenCar     = byOperatingType['GreenCar'] ?? 0;
+        const premium      = byOperatingType['Premium']  ?? 0;
+
         return {
-          success: true, category, sheetName, recordCount: rows.length, timestamp: ts,
-          message: `ℹ️  Bàn giao xe: lưu ${rows.length} bản ghi${ctx}`,
+          success: true, category, sheetName, recordCount: vehicleUpdates.length, timestamp: ts,
+          message: `✅ Kiểm tra xe: ${vehicleUpdates.length} xe | ✅ Good: ${goodCount} | ⚠️ NotGood: ${notGoodCount} | GreenCar: ${greenCar} / Premium: ${premium}${ctx}`,
         };
       }
 
