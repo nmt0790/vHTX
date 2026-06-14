@@ -1,114 +1,247 @@
 /**
- * Auto-detect column headers (Vietnamese / English / SAP field names)
- * → schema field names for Vehicle and Driver
+ * Column detection using actual GSM system column names
+ * Based on real exports: vehicle_*, export_vehicle_report_*,
+ * driver_*, statistic_attendance_tracking_*
  */
 
-type FieldKeywords = Record<string, string[]>;
+export type FileCategory =
+  | 'vehicle_master'       // vehicle_*.xlsx
+  | 'vehicle_status'       // export_vehicle_report_*.xlsx (sheet Báo cáo tổng hợp)
+  | 'driver_master'        // driver_*.xlsx (not retirement)
+  | 'driver_retirement'    // driver_retirement_*.xlsx
+  | 'attendance'           // statistic_attendance_tracking_*.xlsx
+  | 'handover'             // handoverReport_*.xlsx
+  | 'unknown';
 
-const VEHICLE_FIELDS: FieldKeywords = {
-  id:              ['mã xe', 'số hiệu xe', 'vehicle_id', 'vehicle id', 'equnr', 'equipment', 'mã thiết bị', 'equipment no', 'mã phương tiện'],
-  plate:           ['biển số', 'bks', 'biển kiểm soát', 'license plate', 'serial number', 'sernr', 'số đăng ký', 'bien so', 'number plate'],
-  groupId:         ['mã tổ', 'tổ xe', 'nhóm xe', 'group_id', 'group id', 'functional location', 'tplnr', 'mã nhóm', 'to xe'],
-  groupName:       ['tên tổ', 'tên nhóm xe', 'group name', 'group_name', 'tên tổ xe', 'ten to'],
-  model:           ['loại xe', 'model xe', 'model', 'description', 'mô tả', 'shtxt', 'equipment description', 'loai xe'],
-  status:          ['trạng thái', 'tình trạng', 'status', 'vehicle status', 'tình trạng xe', 'trang thai'],
-  battery:         ['pin', 'mức pin', 'battery', 'battery level', 'sạc pin', '%pin', 'battery %', 'muc pin'],
-  kmToday:         ['km hôm nay', 'quãng đường hôm nay', 'km_today', 'km today', 'daily km', 'distance today', 'km ngày'],
-  kmTotal:         ['tổng km', 'tổng quãng đường', 'total_km', 'total km', 'odometer', 'total distance', 'km tổng', 'tong km'],
-  tripsToday:      ['chuyến hôm nay', 'số chuyến hôm nay', 'trips_today', 'trips today', 'trip count today', 'chuyen hom nay', 'so chuyen'],
-  revenueToday:    ['doanh thu hôm nay', 'dt hôm nay', 'revenue_today', 'revenue today', 'income today', 'doanh thu ngày', 'dt ngay'],
-  driverId:        ['mã tài xế', 'tài xế hiện tại', 'driver_id', 'driver id', 'current driver', 'ma tai xe'],
-  rating:          ['đánh giá', 'điểm đánh giá xe', 'vehicle_rating', 'rating', 'avg rating', 'danh gia'],
-  lastMaintenance: ['bảo dưỡng lần cuối', 'last maintenance', 'last_maintenance', 'bảo dưỡng trước', 'ngày bảo dưỡng gần nhất'],
-  nextMaintenance: ['bảo dưỡng tiếp theo', 'next maintenance', 'next_maintenance', 'dự kiến bảo dưỡng'],
-};
-
-const DRIVER_FIELDS: FieldKeywords = {
-  id:               ['mã nhân viên', 'mã tài xế', 'employee_id', 'employee id', 'driver_id', 'pernr', 'person number', 'msnv', 'ma nhan vien', 'ma tai xe'],
-  name:             ['họ tên', 'tên tài xế', 'tên nhân viên', 'full_name', 'full name', 'driver name', 'name', 'employee name', 'ho ten', 'ten'],
-  vehicleId:        ['mã xe', 'xe phụ trách', 'vehicle_id', 'vehicle id', 'assigned vehicle', 'xe được giao', 'bien so xe'],
-  groupId:          ['mã tổ', 'tổ xe', 'group_id', 'group id', 'orgunit', 'organizational unit', 'orgeh', 'mã nhóm', 'to xe'],
-  groupName:        ['tên tổ', 'tên tổ xe', 'group name', 'group_name', 'org unit name', 'ten to'],
-  phone:            ['điện thoại', 'số điện thoại', 'phone', 'mobile', 'sdt', 'phone number', 'so dien thoai'],
-  joinDate:         ['ngày vào làm', 'ngày nhận việc', 'join_date', 'join date', 'start date', 'employment date', 'ngay vao lam'],
-  tripsToday:       ['chuyến hôm nay', 'số chuyến hôm nay', 'trips_today', 'trips today', 'trip count today', 'chuyen hom nay'],
-  tripsMonth:       ['chuyến tháng', 'số chuyến tháng', 'trips_month', 'trips month', 'trip count month', 'chuyen thang'],
-  revenueToday:     ['doanh thu hôm nay', 'dt hôm nay', 'revenue_today', 'revenue today', 'income today', 'thu nhap hom nay'],
-  revenueMonth:     ['doanh thu tháng', 'dt tháng', 'revenue_month', 'revenue month', 'income month', 'thu nhap thang'],
-  rating:           ['đánh giá kh', 'đánh giá khách hàng', 'customer rating', 'rating', 'điểm đánh giá', 'avg rating', 'danh gia kh'],
-  acceptRate:       ['tỷ lệ nhận', 'nhận chuyến', 'accept_rate', 'accept rate', '%nhận', 'tỷ lệ chấp nhận', 'ty le nhan'],
-  cancelRate:       ['tỷ lệ hủy', 'hủy chuyến', 'cancel_rate', 'cancel rate', '%hủy', 'tỷ lệ hủy chuyến', 'ty le huy'],
-  onTimeRate:       ['đúng giờ', 'tỷ lệ đúng giờ', 'ontime_rate', 'on_time_rate', 'on time rate', '%đúng giờ', 'ty le dung gio'],
-  violations:       ['vi phạm', 'số vi phạm', 'violations', 'violation_count', 'vi phạm giao thông', 'loi vi pham'],
-  kpiScore:         ['điểm kpi', 'kpi score', 'kpi_score', 'điểm tổng', 'performance score', 'diem kpi'],
-  ytclcvScore:      ['ytclcv', 'điểm ytclcv', 'ý thức chất lượng', 'ytclcv_score', 'quality score', 'diem ytclcv'],
-  onlineDaysWeek:   ['ngày online tuần', 'online days week', 'online_days_week', 'ngày hoạt động tuần', 'ngay online tuan'],
-  onlineHoursAvgDay:['giờ online tb', 'avg online hours', 'online_hours_avg', 'giờ/ngày', 'gio online tb'],
-  hoursWorkedToday: ['giờ làm hôm nay', 'hours today', 'hours_worked_today', 'thời gian làm việc hôm nay'],
-  hoursWorkedMonth: ['giờ làm tháng', 'hours month', 'hours_worked_month', 'tổng giờ làm tháng'],
-  chargingSessions: ['lần sạc', 'charging sessions', 'charging_sessions', 'số lần sạc tháng', 'lan sac'],
-  chargingCostMonth:['chi phí sạc', 'charging cost', 'charging_cost_month', 'tiền điện sạc tháng'],
-  vehicleType:      ['loại phương tiện', 'vehicle type', 'vehicle_type', 'loại xe tài xế', 'loai pt'],
-  status:           ['trạng thái tài xế', 'tình trạng', 'driver status', 'status', 'trang thai'],
-};
-
-function normalize(s: string): string {
-  return s.toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // bỏ dấu tiếng Việt
-    .replace(/[^a-z0-9\s%]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+export function detectFileCategory(filename: string): FileCategory {
+  const f = filename.toLowerCase();
+  if (f.includes('statistic_attendance') || f.includes('attendance_tracking')) return 'attendance';
+  if (f.includes('export_vehicle_report'))  return 'vehicle_status';
+  if (f.includes('driver_retirement'))      return 'driver_retirement';
+  if (f.includes('driver_'))               return 'driver_master';
+  if (f.includes('vehicle_'))              return 'vehicle_master';
+  if (f.includes('handoverreport') || f.includes('handover_report')) return 'handover';
+  return 'unknown';
 }
 
-function matchField(header: string, fieldMap: FieldKeywords): string | null {
-  const h = normalize(header);
-  let bestField: string | null = null;
-  let bestScore = 0;
+// ── Column index helpers ──────────────────────────────────────────
 
-  for (const [field, keywords] of Object.entries(fieldMap)) {
-    for (const kw of keywords) {
-      const k = normalize(kw);
-      if (h === k) return field; // exact match
-      if (h.includes(k) || k.includes(h)) {
-        const score = k.length; // longer match = more specific
-        if (score > bestScore) { bestScore = score; bestField = field; }
-      }
-    }
+export interface ColIndex {
+  [field: string]: number;  // field name → 0-based column index
+}
+
+function norm(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+function idx(headers: string[], ...names: string[]): number {
+  const normalized = headers.map(h => norm(h?.toString() ?? ''));
+  for (const name of names) {
+    const i = normalized.indexOf(norm(name));
+    if (i >= 0) return i;
   }
-  return bestField;
+  return -1;
 }
 
-export interface ColumnMapping {
-  header: string;
-  field: string | null;
-  index: number;
+// ── Vehicle Master columns ────────────────────────────────────────
+export function vehicleMasterCols(headers: string[]): ColIndex {
+  return {
+    id:              idx(headers, 'Số khung', 'so khung', 'chassis'),
+    plate:           idx(headers, 'Biển số', 'bien so', 'bks', 'Biển kiểm soát'),
+    model:           idx(headers, 'Dòng xe', 'dong xe', 'Kiểu xe', 'Model'),
+    subModel:        idx(headers, 'Kiểu xe'),
+    color:           idx(headers, 'Màu xe', 'mau xe'),
+    year:            idx(headers, 'Năm sản xuất', 'nam sx'),
+    groupId:         idx(headers, 'Tổ', 'to', 'Tổ xe'),
+    groupParent:     idx(headers, 'Đội', 'doi', 'Đội xe'),
+    city:            idx(headers, 'Tỉnh/Thành phố', 'tinh thanh pho', 'Thành Phố'),
+    depot:           idx(headers, 'Depot', 'depot'),
+    kmTotal:         idx(headers, 'ODO (km)', 'odo', 'ODO'),
+    registrationExp: idx(headers, 'Ngày hết hạn đăng kiểm', 'han dang kiem'),
+    badgeExp:        idx(headers, 'Ngày hết hạn phù hiệu', 'han phu hieu'),
+    marketDate:      idx(headers, 'Ngày ra thị trường', 'ngay ra tt'),
+    depotDate:       idx(headers, 'Ngày về depot', 'ngay ve depot'),
+  };
 }
 
-export type DataType = 'vehicles' | 'drivers' | 'unknown';
-
-export function detectDataType(headers: string[]): DataType {
-  const vehicleMatches = headers.filter(h => matchField(h, VEHICLE_FIELDS)).length;
-  const driverMatches  = headers.filter(h => matchField(h, DRIVER_FIELDS)).length;
-  if (vehicleMatches === 0 && driverMatches === 0) return 'unknown';
-  return vehicleMatches >= driverMatches ? 'vehicles' : 'drivers';
+// ── Vehicle Status columns (Báo cáo tổng hợp sheet) ───────────────
+export function vehicleStatusCols(headers: string[]): ColIndex {
+  return {
+    id:           idx(headers, 'Số khung', 'so khung'),
+    plate:        idx(headers, 'BKS', 'Biển số', 'bks'),
+    groupId:      idx(headers, 'Đội xe', 'doi xe', 'Tổ'),
+    statusCode:   idx(headers, 'Mã tình trạng', 'ma tinh trang'),
+    statusText:   idx(headers, 'Tình trạng', 'tinh trang'),
+    location:     idx(headers, 'Mã vị trí', 'ma vi tri', 'Vị trí xe nằm'),
+    model:        idx(headers, 'Loại xe', 'loai xe'),
+    driverId:     idx(headers, 'Tài xế', 'tai xe'),
+    daysOperating:idx(headers, 'Số ngày vận doanh', 'so ngay van doanh'),
+    daysWorkshop: idx(headers, 'Số ngày nằm xưởng', 'so ngay nam xuong'),
+    lastStatusDate:idx(headers, 'Ngày ghi nhận trạng thái cuối'),
+    repairOrder:  idx(headers, 'Lệnh sửa chữa cuối (DMS)'),
+    repairStatus: idx(headers, 'Trạng thái sửa chữa'),
+    workshop:     idx(headers, 'Xưởng dịch vụ'),
+  };
 }
 
-export function mapColumns(headers: string[], type: DataType): ColumnMapping[] {
-  const fieldMap = type === 'vehicles' ? VEHICLE_FIELDS : DRIVER_FIELDS;
-  return headers.map((header, index) => ({
-    header,
-    field: matchField(header, fieldMap),
-    index,
-  }));
+// ── Driver Master columns ─────────────────────────────────────────
+export function driverMasterCols(headers: string[]): ColIndex {
+  return {
+    id:         idx(headers, 'Mã tài xế', 'ma tai xe'),
+    sapId:      idx(headers, 'Mã SAP', 'ma sap'),
+    appId:      idx(headers, 'Mã APP', 'ma app'),
+    phone:      idx(headers, 'Số điện thoại', 'so dien thoai'),
+    name:       idx(headers, 'Họ & tên', 'ho ten', 'Ho & ten', 'Họ và tên'),
+    email:      idx(headers, 'Email', 'email'),
+    taxCode:    idx(headers, 'Mã số thuế', 'ma so thue'),
+    status:     idx(headers, 'Trạng thái', 'trang thai'),
+    dob:        idx(headers, 'Ngày sinh', 'ngay sinh'),
+    gender:     idx(headers, 'Giới tính', 'gioi tinh'),
+    accountStatus: idx(headers, 'Trạng thái tài khoản', 'trang thai tk'),
+    lockReason: idx(headers, 'Lý do khóa', 'ly do khoa'),
+    idNumber:   idx(headers, 'Số giấy tờ', 'so giay to'),
+    idType:     idx(headers, 'Loại giấy tờ', 'loai giay to'),
+    idDate:     idx(headers, 'Ngày cấp', 'ngay cap'),
+    createdAt:  idx(headers, 'Thời gian tạo', 'thoi gian tao'),
+    vehicleId:  idx(headers, 'Số khung', 'so khung'),
+    vehiclePlate: idx(headers, 'Biển số', 'bien so', 'bks'),
+    model:      idx(headers, 'Dòng xe', 'dong xe'),
+    vehicleStatus: idx(headers, 'Trạng thái gán', 'trang thai gan'),
+    assignedAt: idx(headers, 'Thời gian gán', 'thoi gian gan'),
+    city:       idx(headers, 'Tỉnh/Thành phố', 'tinh thanh pho', 'Thành phố'),
+    depot:      idx(headers, 'Depot', 'depot'),
+    groupParent:idx(headers, 'Đội', 'doi'),
+    groupId:    idx(headers, 'Tổ', 'to'),
+    contactName:idx(headers, 'Tên người thân', 'ten nguoi than'),
+    contactPhone:idx(headers,'Số điện thoại người thân'),
+    relationship:idx(headers,'Mối quan hệ', 'moi quan he'),
+  };
 }
 
-export function rowToRecord(
-  row: (string | number | null)[],
-  mappings: ColumnMapping[]
-): Record<string, unknown> {
-  const record: Record<string, unknown> = {};
-  for (const { field, index } of mappings) {
-    if (field && row[index] != null) record[field] = row[index];
-  }
-  return record;
+// ── Attendance Tracking columns ───────────────────────────────────
+export function attendanceCols(headers: string[]): ColIndex {
+  return {
+    driverId:      idx(headers, 'Mã tài xế', 'ma tai xe'),
+    driverName:    idx(headers, 'Tên tài xế', 'ten tai xe'),
+    plate:         idx(headers, 'Biển kiểm soát', 'bien ks', 'BKS', 'Biển số'),
+    model:         idx(headers, 'Model', 'model', 'Dòng xe'),
+    vehicleType:   idx(headers, 'Dòng xe', 'dong xe'),
+    system:        idx(headers, 'Hệ thống chấm công', 'he thong cham cong'),
+    shiftName:     idx(headers, 'Tên chấm công', 'ten cham cong', 'Vận hành chấm công'),
+    date:          idx(headers, 'Ngày phân công', 'ngay phan cong'),
+    standardDays:  idx(headers, 'Số công chuẩn', 'so cong chuan'),
+    shiftStart:    idx(headers, 'Bắt đầu ca', 'bat dau ca'),
+    shiftEnd:      idx(headers, 'Kết thúc ca', 'ket thuc ca'),
+    onlineTime:    idx(headers, 'Tổng thời gian online', 'tong tg online', 'online time'),
+    revenue:       idx(headers, 'Doanh số', 'doanh so', 'revenue'),
+    workDays:      idx(headers, 'Công chính', 'cong chinh'),
+    trainingDays:  idx(headers, 'Công đào tạo', 'cong dao tao'),
+    tripRevenue:   idx(headers, 'Tổng giá trị cuốc xe', 'tong gt cuoc xe'),
+    operatingTime: idx(headers, 'Thời gian vận doanh', 'tg van doanh'),
+    acceptRate:    idx(headers, 'Tỷ lệ nhận chuyến', 'ty le nhan chuyen'),
+    cancelRate:    idx(headers, 'Tỷ lệ hủy chuyến', 'ty le huy chuyen'),
+    completionRate:idx(headers, 'Tỷ lệ hoàn thành', 'ty le hoan thanh'),
+    tripsCompleted:idx(headers, 'Số cuốc xe hoàn thành', 'so cuoc xe ht'),
+    shiftCode:     idx(headers, 'Mã ca', 'ma ca'),
+    area:          idx(headers, 'Khu vực', 'khu vuc'),
+  };
+}
+
+// ── Handover columns ──────────────────────────────────────────────
+export function handoverCols(headers: string[]): ColIndex {
+  return {
+    plate:      idx(headers, 'Biển số', 'BKS'),
+    sapId:      idx(headers, 'Mã SAP', 'ma sap'),
+    driverName: idx(headers, 'Driver Name', 'Ten tai xe', 'Họ & tên'),
+    depot:      idx(headers, 'Depot'),
+    groupParent:idx(headers, 'Đội'),
+    groupId:    idx(headers, 'Tổ'),
+    status:     idx(headers, 'Trạng thái', 'Status'),
+    date:       idx(headers, 'Handover Date'),
+    model:      idx(headers, 'Model'),
+    type:       idx(headers, 'Handover Type'),   // In / Out
+    assessment: idx(headers, 'Overall Assessment'),
+    odo:        idx(headers, 'ODO'),
+  };
+}
+
+// ── Status code mapping ───────────────────────────────────────────
+
+export function mapVehicleStatusCode(code: string, text?: string): string {
+  // Real status codes from export_vehicle_report_*.xlsx
+  const STATUS_MAP: Record<string, string> = {
+    'vandoanhhangngay':         'Đang chạy',    // Vận doanh hàng ngày
+    'vandoanh':                 'Đang chạy',
+    'sac':                      'Sạc pin',
+    'sachang':                  'Sạc pin',
+    'namxuong':                 'Bảo dưỡng',    // Nằm xưởng
+    'loikithuat':               'Bảo dưỡng',    // Lỗi kỹ thuật
+    'thaydongco':               'Bảo dưỡng',    // Thay động cơ
+    'xe_vctn':                  'Bảo dưỡng',    // Xe VCTN (vehicle condition)
+    'xevctn':                   'Bảo dưỡng',
+    'namlyodkhac':              'Bảo dưỡng',    // Nằm lý do khác
+    'namlydo':                  'Bảo dưỡng',
+    'chotuyendungtxtx':         'Rảnh',         // Chờ tuyển dụng tài xế
+    'txtxnghi':                 'Rảnh',         // Tài xế nghỉ
+    'hethangiaytо':             'Rảnh',         // Hết hạn giấy tờ
+    'hethangiayto':             'Rảnh',
+    'namtaicongаn':             'Rảnh',         // Nằm tại công an
+    'namtaiconga':              'Rảnh',
+    'hoanthanththutucthanhly':  'Rảnh',
+    'depot':                    'Rảnh',
+  };
+
+  const c = (code ?? '').toLowerCase().replace(/[_\s]/g, '');
+  const t = (text ?? '').toLowerCase();
+
+  if (STATUS_MAP[c]) return STATUS_MAP[c];
+
+  // Partial matches
+  if (c.includes('vandoanh'))  return 'Đang chạy';
+  if (c.includes('sac'))       return 'Sạc pin';
+  if (c.includes('xuong') || c.includes('kithuat') || c.includes('dongco')) return 'Bảo dưỡng';
+
+  if (t.includes('vận doanh')) return 'Đang chạy';
+  if (t.includes('sạc pin'))   return 'Sạc pin';
+  if (t.includes('xưởng') || t.includes('sửa chữa')) return 'Bảo dưỡng';
+
+  return 'Rảnh';
+}
+
+export function mapDriverStatusText(status: string): string {
+  const s = (status ?? '').toLowerCase();
+  if (s === 'active') return 'Trực tuyến';
+  if (s === 'inactive' || s === 'locked' || s === 'lock') return 'Ngoại tuyến';
+  return 'Ngoại tuyến';
+}
+
+// ── Time parsing: "5h44m" → decimal hours ────────────────────────
+export function parseTimeHours(raw: string | number | null): number {
+  if (!raw) return 0;
+  if (typeof raw === 'number') return raw;
+  const str = String(raw);
+  const m = str.match(/(\d+)h(\d*)m?/i);
+  if (m) return Number(m[1]) + (Number(m[2] || 0) / 60);
+  const h = str.match(/^(\d+(?:[.,]\d+)?)h?$/);
+  if (h) return Number(h[1].replace(',', '.'));
+  return 0;
+}
+
+// ── Date parsing: "26/04/2026" or "2026-04-26" ───────────────────
+export function parseDate(raw: string | number | null): string {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  // DD/MM/YYYY
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return s.slice(0, 10);
+}
+
+export function parseNumber(raw: string | number | null): number {
+  if (raw == null) return 0;
+  if (typeof raw === 'number') return raw;
+  const n = Number(String(raw).replace(/[^0-9.-]/g, ''));
+  return isNaN(n) ? 0 : n;
 }

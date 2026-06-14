@@ -20,16 +20,15 @@ interface ImportResponse {
 }
 
 const DATA_TYPE_OPTIONS = [
-  { value: 'auto', label: 'Tự động nhận diện', desc: 'Dashboard tự phân tích cột dữ liệu' },
-  { value: 'vehicles', label: 'Danh sách xe', desc: 'Thông tin xe: biển số, model, tổ xe, trạng thái, KPI' },
-  { value: 'drivers', label: 'Danh sách tài xế', desc: 'Thông tin tài xế: tên, tổ xe, KPI, doanh thu' },
+  { value: 'auto', label: 'Tự động nhận diện', desc: 'Nhận dạng qua tên file (vehicle_*, driver_*, statistic_attendance_*, ...)' },
 ];
 
 const TIPS = [
-  { icon: '📋', text: 'File Excel: dashboard tự đọc từng sheet, không cần chọn sheet riêng' },
-  { icon: '📌', text: 'Tên cột không cần chính xác 100% — hệ thống nhận diện tiếng Việt/SAP/English' },
-  { icon: '🔄', text: 'Dữ liệu mới sẽ được gộp với dữ liệu hiện có (không xóa record cũ)' },
-  { icon: '🔐', text: 'File chỉ được xử lý trên máy này (localhost) — không gửi ra ngoài' },
+  { icon: '📁', text: 'Hệ thống nhận diện loại file qua tên file — giữ nguyên tên file từ hệ thống' },
+  { icon: '📋', text: 'File Excel nhiều sheet: tự xử lý đúng sheet (ví dụ: "Báo cáo tổng hợp")' },
+  { icon: '🔄', text: 'Dữ liệu được gộp (merge), không xóa record cũ. Upload nhiều file cùng lúc được' },
+  { icon: '📊', text: 'File chấm công (statistic_attendance_*): tự tổng hợp KPI từng tài xế theo ngày/tháng' },
+  { icon: '🔐', text: 'File chỉ xử lý trên máy này (localhost) — không gửi ra ngoài mạng' },
 ];
 
 function fmtTime(iso: string) {
@@ -188,19 +187,19 @@ export default function ImportDashboard() {
                           <span className="font-medium text-gray-900">{r.mappedFields}</span> cột được nhận diện
                         </span>
                         <span className="text-gray-600">
-                          Loại: <span className={`font-medium ${r.type === 'vehicles' ? 'text-blue-600' : r.type === 'drivers' ? 'text-purple-600' : 'text-gray-600'}`}>
-                            {r.type === 'vehicles' ? 'Xe' : r.type === 'drivers' ? 'Tài xế' : 'Không xác định'}
+                          Loại: <span className="font-medium text-emerald-700">
+                            {(r as unknown as {category: string}).category?.replace(/_/g, ' ')}
                           </span>
                         </span>
                       </div>
-                      {r.unmappedHeaders.length > 0 && (
+                      {(r as unknown as {unmappedHeaders?: string[]}).unmappedHeaders?.length ? (
                         <div className="flex items-start gap-1.5 mt-2">
                           <AlertTriangle size={13} className="text-amber-500 mt-0.5 shrink-0" />
                           <p className="text-xs text-amber-700">
-                            Cột chưa nhận diện: <span className="font-medium">{r.unmappedHeaders.join(', ')}</span>
+                            Cột chưa map: <span className="font-medium">{(r as unknown as {unmappedHeaders: string[]}).unmappedHeaders.join(', ')}</span>
                           </p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -232,16 +231,20 @@ export default function ImportDashboard() {
             <h3 className="text-sm font-semibold text-gray-800 mb-3">Tên cột được nhận diện</h3>
             <div className="space-y-3 text-xs">
               <div>
-                <p className="font-medium text-blue-700 mb-1">🚗 Xe</p>
-                <p className="text-gray-500">Mã xe, Biển số, Tổ xe, Loại xe, Trạng thái, Pin, Km hôm nay, Chuyến hôm nay, Doanh thu hôm nay</p>
+                <p className="font-medium text-blue-700 mb-1">🚗 vehicle_*.xlsx</p>
+                <p className="text-gray-500">Số khung, Biển số, Dòng xe, Đội, Tổ, ODO, Hạn đăng kiểm</p>
               </div>
               <div>
-                <p className="font-medium text-purple-700 mb-1">👤 Tài xế</p>
-                <p className="text-gray-500">Mã nhân viên, Họ tên, Tổ xe, Điện thoại, Chuyến tháng, Doanh thu tháng, Tỷ lệ nhận, Tỷ lệ hủy, Vi phạm, Điểm KPI</p>
+                <p className="font-medium text-indigo-700 mb-1">📊 export_vehicle_report_*.xlsx</p>
+                <p className="text-gray-500">Tình trạng xe, Vị trí, Tài xế, Số ngày vận doanh/xưởng</p>
               </div>
               <div>
-                <p className="font-medium text-gray-500 mb-1">🔧 SAP field names</p>
-                <p className="text-gray-400">EQUNR, SERNR, PERNR, TPLNR, ORGEH, BEGDA... đều được nhận diện</p>
+                <p className="font-medium text-purple-700 mb-1">👤 driver_*.xlsx</p>
+                <p className="text-gray-500">Mã tài xế, Mã SAP, Họ & tên, Số điện thoại, Trạng thái, Số khung gán, Tổ</p>
+              </div>
+              <div>
+                <p className="font-medium text-emerald-700 mb-1">📅 statistic_attendance_*.xlsx</p>
+                <p className="text-gray-500">Mã tài xế, Tên, Doanh số, Số cuốc hoàn thành, Tỷ lệ nhận/hủy, Thời gian online, Ngày phân công</p>
               </div>
             </div>
           </div>

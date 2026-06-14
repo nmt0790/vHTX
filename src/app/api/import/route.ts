@@ -1,40 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseExcel, parseCsv, ParsedFile } from '@/lib/import/fileParser';
-import {
-  detectDataType, mapColumns, rowToRecord,
-  DataType, ColumnMapping,
-} from '@/lib/import/columnMapper';
+import { detectFileCategory, FileCategory } from '@/lib/import/columnMapper';
+import { vehicleMasterToVehicle, vehicleStatusToVehicle } from '@/lib/import/vehicleTransform';
+import { driverMasterToDriver } from '@/lib/import/driverTransform';
+import { aggregateAttendance } from '@/lib/import/attendanceTransform';
 import { writeCache, readCache } from '@/lib/sync/cache';
-import { transformVehicle, transformDriver, Vehicle, Driver } from '@/lib/sync/transform';
+import type { Vehicle, Driver } from '@/lib/sync/transform';
 
 export interface ImportResult {
-  success: boolean;
-  type: DataType;
-  sheetName?: string;
-  recordCount: number;
-  mappedFields: number;
-  unmappedHeaders: string[];
-  sample: Record<string, unknown>[];
-  message: string;
-  timestamp: string;
+  success:        boolean;
+  category:       FileCategory;
+  sheetName?:     string;
+  recordCount:    number;
+  message:        string;
+  timestamp:      string;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const file = form.get('file') as File | null;
-    const hint = (form.get('type') as string | null) ?? 'auto';
-
     if (!file) return NextResponse.json({ success: false, message: 'Không tìm thấy file' }, { status: 400 });
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const name   = file.name.toLowerCase();
+    const buffer   = Buffer.from(await file.arrayBuffer());
+    const filename = file.name;
+    const ext      = filename.toLowerCase();
+    const category = detectFileCategory(filename);
 
     // ── Parse file ───────────────────────────────────────────────
     let sheets: ParsedFile[];
-    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    if (ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
       sheets = await parseExcel(buffer);
-    } else if (name.endsWith('.csv')) {
+    } else if (ext.endsWith('.csv')) {
       sheets = [parseCsv(buffer)];
     } else {
       return NextResponse.json({ success: false, message: 'Chỉ hỗ trợ .xlsx, .xls, .csv' }, { status: 400 });
@@ -46,86 +43,28 @@ export async function POST(req: NextRequest) {
 
     const results: ImportResult[] = [];
 
+    // ── Process each sheet ───────────────────────────────────────
     for (const sheet of sheets) {
       if (sheet.rows.length === 0) continue;
-
-      // ── Auto-detect data type ────────────────────────────────
-      const type: DataType = hint !== 'auto' ? (hint as DataType) : detectDataType(sheet.headers);
-      if (type === 'unknown') {
-        results.push({
-          success: false, type, sheetName: sheet.sheetName,
-          recordCount: 0, mappedFields: 0, unmappedHeaders: sheet.headers,
-          sample: [],
-          message: `Sheet "${sheet.sheetName ?? 'unknown'}": không nhận ra định dạng cột`,
-          timestamp: new Date().toISOString(),
-        });
-        continue;
-      }
-
-      const mappings: ColumnMapping[] = mapColumns(sheet.headers, type);
-      const mappedFields = mappings.filter(m => m.field).length;
-      const unmappedHeaders = mappings.filter(m => !m.field).map(m => m.header);
-
-      // ── Transform rows ───────────────────────────────────────
-      const raw = sheet.rows.map(row => rowToRecord(row, mappings));
-
-      if (type === 'vehicles') {
-        const incoming = raw.map(r => transformVehicle(r)).filter(v => v.id);
-
-        // Merge with existing: static master fields + dynamic daily fields
-        const existing: Vehicle[] = readCache<Vehicle[]>('vehicles') ?? [];
-        const byId = new Map(existing.map(v => [v.id, v]));
-        for (const v of incoming) {
-          byId.set(v.id, { ...(byId.get(v.id) ?? {}), ...v });
-        }
-        const merged = Array.from(byId.values());
-        writeCache('vehicles', merged);
-
-        // Recompute fleet_kpi
-        recomputeFleetKpi(merged, readCache<Driver[]>('drivers') ?? []);
-
-        results.push({
-          success: true, type, sheetName: sheet.sheetName,
-          recordCount: incoming.length,
-          mappedFields,
-          unmappedHeaders,
-          sample: incoming.slice(0, 3) as unknown as Record<string, unknown>[],
-          message: `Đã import ${incoming.length} xe${sheet.sheetName ? ` (sheet: ${sheet.sheetName})` : ''}`,
-          timestamp: new Date().toISOString(),
-        });
-      } else {
-        const incoming = raw.map(r => transformDriver(r)).filter(d => d.id);
-
-        const existing: Driver[] = readCache<Driver[]>('drivers') ?? [];
-        const byId = new Map(existing.map(d => [d.id, d]));
-        for (const d of incoming) {
-          byId.set(d.id, { ...(byId.get(d.id) ?? {}), ...d });
-        }
-        const merged = Array.from(byId.values());
-        writeCache('drivers', merged);
-
-        recomputeFleetKpi(readCache<Vehicle[]>('vehicles') ?? [], merged);
-
-        results.push({
-          success: true, type, sheetName: sheet.sheetName,
-          recordCount: incoming.length,
-          mappedFields,
-          unmappedHeaders,
-          sample: incoming.slice(0, 3) as unknown as Record<string, unknown>[],
-          message: `Đã import ${incoming.length} tài xế${sheet.sheetName ? ` (sheet: ${sheet.sheetName})` : ''}`,
-          timestamp: new Date().toISOString(),
-        });
-      }
+      const r = await processSheet(sheet, category, filename);
+      if (r) results.push(r);
     }
 
-    // Persist import log
-    const importLog = readCache<ImportResult[]>('import_log') ?? [];
-    importLog.unshift(...results);
-    writeCache('import_log', importLog.slice(0, 50));
+    if (!results.length) {
+      results.push({
+        success: false, category, recordCount: 0,
+        message: `Không đọc được dữ liệu từ file "${filename}". Kiểm tra file có đúng định dạng không.`,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-    const allOk = results.every(r => r.success);
+    // Persist log
+    const log = readCache<ImportResult[]>('import_log') ?? [];
+    log.unshift(...results);
+    writeCache('import_log', log.slice(0, 50));
+
     return NextResponse.json({
-      success: allOk,
+      success: results.every(r => r.success),
       results,
       message: results.map(r => r.message).join(' | '),
     });
@@ -137,12 +76,171 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  const log = readCache<ImportResult[]>('import_log') ?? [];
-  return NextResponse.json({ log });
+  return NextResponse.json({ log: readCache<ImportResult[]>('import_log') ?? [] });
 }
 
-// ── Recompute fleet_kpi after each import ─────────────────────────
-function recomputeFleetKpi(vehicles: Vehicle[], drivers: Driver[]) {
+// ── Per-sheet handler ─────────────────────────────────────────────
+
+async function processSheet(
+  sheet: ParsedFile,
+  category: FileCategory,
+  filename: string,
+): Promise<ImportResult | null> {
+  const { headers, rows, sheetName } = sheet;
+  const ts = new Date().toISOString();
+  const ctx = sheetName ? ` (sheet: ${sheetName})` : '';
+
+  // For vehicle_status, only use "Báo cáo tổng hợp" sheet (summary, not detail)
+  if (category === 'vehicle_status') {
+    if (sheetName && !sheetName.includes('tổng hợp') && !sheetName.includes('tong hop')) return null;
+  }
+
+  try {
+    switch (category) {
+      // ── Vehicle master ──────────────────────────────────────────
+      case 'vehicle_master': {
+        const incoming = vehicleMasterToVehicle(headers, rows);
+        const merged   = mergeVehicles(incoming);
+        recomputeFleetKpi();
+        return {
+          success: true, category, sheetName, recordCount: incoming.length, timestamp: ts,
+          message: `✅ Xe master: đã import ${incoming.length} xe${ctx}`,
+        };
+      }
+
+      // ── Vehicle status ─────────────────────────────────────────
+      case 'vehicle_status': {
+        const incoming = vehicleStatusToVehicle(headers, rows);
+        mergeVehicles(incoming);
+        recomputeFleetKpi();
+        return {
+          success: true, category, sheetName, recordCount: incoming.length, timestamp: ts,
+          message: `✅ Trạng thái xe: cập nhật ${incoming.length} xe${ctx}`,
+        };
+      }
+
+      // ── Driver master ───────────────────────────────────────────
+      case 'driver_master': {
+        const incoming = driverMasterToDriver(headers, rows);
+        mergeDrivers(incoming);
+        recomputeFleetKpi();
+        return {
+          success: true, category, sheetName, recordCount: incoming.length, timestamp: ts,
+          message: `✅ Tài xế master: đã import ${incoming.length} tài xế${ctx}`,
+        };
+      }
+
+      // ── Attendance tracking ─────────────────────────────────────
+      case 'attendance': {
+        const incoming = aggregateAttendance(headers, rows);
+        // Merge attendance KPIs into existing driver records (join by SAP ID or name)
+        mergeAttendanceIntoDrivers(incoming);
+        recomputeFleetKpi();
+        return {
+          success: true, category, sheetName, recordCount: incoming.length, timestamp: ts,
+          message: `✅ Chấm công: tổng hợp ${rows.length} dòng → ${incoming.length} tài xế${ctx}`,
+        };
+      }
+
+      // ── Driver retirement (informational, store separately) ─────
+      case 'driver_retirement': {
+        writeCache('driver_retirement', rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]))));
+        return {
+          success: true, category, sheetName, recordCount: rows.length, timestamp: ts,
+          message: `ℹ️  Nghỉ việc: lưu ${rows.length} bản ghi${ctx}`,
+        };
+      }
+
+      // ── Handover report (update ODO) ────────────────────────────
+      case 'handover': {
+        writeCache('handover_report', rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i]]))));
+        return {
+          success: true, category, sheetName, recordCount: rows.length, timestamp: ts,
+          message: `ℹ️  Bàn giao xe: lưu ${rows.length} bản ghi${ctx}`,
+        };
+      }
+
+      // ── Unknown ─────────────────────────────────────────────────
+      default: {
+        return {
+          success: false, category, sheetName, recordCount: 0, timestamp: ts,
+          message: `⚠️  Không nhận diện được loại file "${filename}"${ctx}. Đổi tên file: vehicle_*, driver_*, statistic_attendance_*`,
+        };
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, category, sheetName, recordCount: 0, timestamp: ts, message: `❌ Lỗi: ${msg}` };
+  }
+}
+
+// ── Merge helpers ─────────────────────────────────────────────────
+
+function mergeVehicles(incoming: Vehicle[]): Vehicle[] {
+  const existing: Vehicle[] = readCache<Vehicle[]>('vehicles') ?? [];
+  const byId = new Map(existing.map(v => [v.id, v]));
+  for (const v of incoming) {
+    byId.set(v.id, { ...(byId.get(v.id) ?? {}), ...stripEmpty(v) } as Vehicle);
+  }
+  const merged = [...byId.values()];
+  writeCache('vehicles', merged);
+  return merged;
+}
+
+function mergeDrivers(incoming: Driver[]): Driver[] {
+  const existing: Driver[] = readCache<Driver[]>('drivers') ?? [];
+  const byId = new Map(existing.map(d => [d.id, d]));
+  for (const d of incoming) {
+    byId.set(d.id, { ...(byId.get(d.id) ?? {}), ...stripEmpty(d) } as Driver);
+  }
+  const merged = [...byId.values()];
+  writeCache('drivers', merged);
+  return merged;
+}
+
+function mergeAttendanceIntoDrivers(attendance: Driver[]): void {
+  const existing: Driver[] = readCache<Driver[]>('drivers') ?? [];
+
+  // Build lookup maps from existing: by id and by name
+  const byId   = new Map(existing.map(d => [d.id, d]));
+  const byName = new Map(existing.map(d => [d.name.toLowerCase().trim(), d]));
+
+  for (const atten of attendance) {
+    // Try to find existing driver by id (SAP ID in attendance = sapId or id)
+    let match = byId.get(atten.id);
+    if (!match) {
+      // Fallback: match by name
+      match = byName.get(atten.name.toLowerCase().trim());
+    }
+
+    if (match) {
+      // Merge KPI fields into existing driver record
+      byId.set(match.id, {
+        ...match,
+        tripsToday:        atten.tripsToday,
+        tripsMonth:        atten.tripsMonth,
+        revenueToday:      atten.revenueToday,
+        revenueMonth:      atten.revenueMonth,
+        acceptRate:        atten.acceptRate,
+        cancelRate:        atten.cancelRate,
+        hoursWorkedToday:  atten.hoursWorkedToday,
+        hoursWorkedMonth:  atten.hoursWorkedMonth,
+        onlineHoursAvgDay: atten.onlineHoursAvgDay,
+        status:            atten.status,
+        vehicleType:       atten.vehicleType || match.vehicleType,
+      });
+    } else {
+      // New driver (not in master yet), add as-is
+      byId.set(atten.id, atten);
+    }
+  }
+
+  writeCache('drivers', [...byId.values()]);
+}
+
+function recomputeFleetKpi() {
+  const vehicles: Vehicle[] = readCache<Vehicle[]>('vehicles') ?? [];
+  const drivers:  Driver[]  = readCache<Driver[]>('drivers')  ?? [];
   const active = vehicles.filter(v => v.status === 'Đang chạy').length;
   writeCache('fleet_kpi', {
     totalVehicles:       vehicles.length,
@@ -161,4 +259,11 @@ function recomputeFleetKpi(vehicles: Vehicle[], drivers: Driver[]) {
     revenueMonth:        drivers.reduce((s, d) => s + d.revenueMonth, 0),
     revenueTarget:       1_500_000_000,
   });
+}
+
+// Remove null/empty string fields before merge (don't overwrite good data with blank)
+function stripEmpty<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== null && v !== '' && v !== undefined)
+  ) as Partial<T>;
 }
