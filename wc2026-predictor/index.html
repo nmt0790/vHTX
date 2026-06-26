@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>World Cup 2026 Predictor</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🏆 World Cup 2026 Predictor</h1>
+    <p class="subtitle">Mô phỏng Monte Carlo 48 đội — bốc thăm bảng, vòng bảng, loại trực tiếp — để dự đoán đội vô địch.</p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label for="iterations">Số lần mô phỏng giải đấu:</label>
+      <input id="iterations" type="number" value="2000" min="100" max="20000" step="100" />
+      <button id="run-btn">Run Simulation</button>
+      <span id="progress" class="progress"></span>
+    </section>
+
+    <section class="results-panel">
+      <h2>Xác suất vô địch</h2>
+      <div id="results" class="results"></div>
+    </section>
+
+    <section class="bracket-panel">
+      <h2>Mô phỏng 1 giải đấu cụ thể</h2>
+      <button id="bracket-btn">Simulate One Tournament</button>
+      <div id="bracket-result" class="bracket-result"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Dự đoán dựa trên chỉ số sức mạnh ước tính (Elo-like), chỉ mang tính giải trí.</p>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
